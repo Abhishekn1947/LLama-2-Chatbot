@@ -1,8 +1,6 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
+#Pre-reqs: Streamlit and replicate 
+#Terminal -> export REPLICATE_API_TOKEN="enter your replicate api token"
+#build and exec -> streamlit run app.py
 
 import streamlit as st
 import replicate
@@ -24,7 +22,7 @@ with st.sidebar:
         if not replicate_api:
             st.warning('Please enter your credentials!', icon='⚠️')
         else:
-            os.environ['REPLICATE_API_TOKEN'] = replicate_api  # Set the token as an environment variable for the current session
+            os.environ['REPLICATE_API_TOKEN'] = r8_Pmf93QudVh8jFl4dcatmYFCDHXtwCmn1F7U9G # Set the token as an environment variable for the current session
             st.success('Proceed to entering your prompt message!', icon='👉')
 
     # Refactored from https://github.com/a16z-infra/llama2-chatbot
@@ -35,11 +33,25 @@ with st.sidebar:
     elif selected_model == 'Llama2-13B':
         llm = 'a16z-infra/llama13b-v2-chat:df7690f1994d94e96ad9d568eac121aecf50684a0b0963b25a41cc40061269e5'
     else:
-        llm = 'replicate/llama70b-v2-chat:e951f18578850b652510200860fc4ea62b3b16fac280f83ff32282f87bbd2e48'
+        llm = 'replicate/llama70b-v2-chat:e951f18578850b652510200860fc4ea62b3b16fac280f83ff32282f87bbd2e48' 
     
-    temperature = st.sidebar.slider('temperature', min_value=0.01, max_value=5.0, value=0.1, step=0.01)
+    temperature = st.sidebar.slider('temperature', min_value=0.01, max_value=5.0, value=0.1, step=0.01) # 'temperature' controls the randomness in the output. A lower temperature results in less random completions.
+# As the temperature approaches zero, the model becomes more deterministic and repetitive, while a higher temperature
+# increases diversity, making the model's responses more varied and unpredictable. The default value is set to 0.1
+# to generate more predictable and conservative responses.
+
     top_p = st.sidebar.slider('top_p', min_value=0.01, max_value=1.0, value=0.9, step=0.01)
+# 'top_p', also known as nucleus sampling, controls the diversity of the generated responses by focusing on the most
+# probable tokens, forming a cumulative probability distribution. 'top_p' is set such that we only consider the top
+# p percent of probability mass. A higher 'top_p' increases diversity, considering more possible tokens for
+# generating responses. A lower 'top_p' makes the model's output more focused and less diverse. The default value is
+# set to 0.9, providing a balance between diversity and relevance.
+
     max_length = st.sidebar.slider('max_length', min_value=64, max_value=4096, value=512, step=8)
+# 'max_length' determines the maximum length of the model's response in tokens (words and punctuation marks).
+# Increasing 'max_length' allows the model to generate longer responses, which can be useful for detailed explanations
+# or stories. Decreasing 'max_length' limits the response length, making the model's replies more concise. The default
+# value is set to 512, offering a moderate length for responses that balances detail with brevity.
     
     st.markdown('Created by Abhishek N. My Chatbot is still a baby, Go easy on her!')
 os.environ['REPLICATE_API_TOKEN'] = replicate_api
@@ -89,4 +101,3 @@ if st.session_state.messages[-1]["role"] != "assistant":
             placeholder.markdown(full_response)
     message = {"role": "assistant", "content": full_response}
     st.session_state.messages.append(message)
-
