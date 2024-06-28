@@ -1,114 +1,99 @@
-import os
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[ ]:
+
+
 import streamlit as st
-from datetime import datetime, timezone
-from google.cloud import aiplatform, bigquery
-from PyPDF2 import PdfReader
-from sentence_transformers import SentenceTransformer
-from typing import List
-from langchain.text_splitter import CharacterTextSplitter
-from langchain_google_vertexai import VertexAI
-from langchain.chains import RetrievalQA
-from langchain_community.vectorstores import Chroma
+import replicate
+import os
 
-# Setting environment variables for Google Cloud Platform
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/Users/abhis_m3/Desktop/LLM Cyber/service_acc.json"
-project_id = "d5assistant"
-location = "us-central1"
+# App title
+st.set_page_config(page_title="Abhi's Llama Chatbot")
 
-# Initialize Google Vertex AI and BigQuery Client
-aiplatform.init(project=project_id, location=location)
-bq_client = bigquery.Client()
-
-# Define schema and create dataset/table if not exists
-def create_bigquery_dataset_table(dataset_id, table_id, schema):
-    dataset_ref = bq_client.dataset(dataset_id)
-    try:
-        bq_client.get_dataset(dataset_ref)
-    except Exception:
-        dataset = bigquery.Dataset(dataset_ref)
-        dataset.location = "US"
-        bq_client.create_dataset(dataset, exists_ok=True)
-
-    table_ref = dataset_ref.table(table_id)
-    try:
-        bq_client.get_table(table_ref)
-    except Exception:
-        table = bigquery.Table(table_ref, schema=schema)
-        bq_client.create_table(table, exists_ok=True)
-
-schema = [
-    bigquery.SchemaField("question", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("answer", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("timestamp", "TIMESTAMP", mode="REQUIRED"),
-]
-
-# Create dataset and table
-dataset_id = "questions_answers"
-table_id = "conversations"
-create_bigquery_dataset_table(dataset_id, table_id, schema)
-
-# Sentence Transformers for Embeddings
-class TransformerEmbeddings:
-    def __init__(self):
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        return self.model.encode(texts, convert_to_tensor=False).tolist()
-
-    def embed_query(self, text: str) -> List[float]:
-        return self.model.encode(text, convert_to_tensor=False).tolist()
-
-# Streamlit UI setup
-st.set_page_config(page_title="Mr.DOC", page_icon="📄")
-st.header("Ask Your PDF 📄")
-
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-# Display conversation history as interactive chat
-for exchange in reversed(st.session_state.history):
-    with st.chat_message("user"):
-        st.write(f"Q: {exchange['question']}")
-    with st.chat_message("assistant"):
-        st.write(f"A: {exchange['answer']}")
-
-# PDF Upload
-pdf = st.file_uploader("Upload your PDF", type="pdf")
-if pdf:
-    pdf_reader = PdfReader(pdf)
-    text = "".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
-    if text:
-        text_splitter = CharacterTextSplitter(separator="\n", chunk_size=1000, chunk_overlap=200)
-        chunks = text_splitter.split_text(text)
-
-        embeddings = TransformerEmbeddings()
-        chroma_index = Chroma.from_texts(chunks, embeddings)
-        retriever = chroma_index.as_retriever()
-
-        # Setup the model with maximum parameters for Gemini Pro
-        llm = VertexAI(
-            model_name="gemini-pro",
-            temperature=0.7,  # Adjust as necessary
-            max_output_tokens=2048,  # Maximum token size for Gemini Pro
-            top_p=1.0
-        )
-        qa_chain = RetrievalQA.from_chain_type(llm, chain_type="stuff", retriever=retriever)
-
-        if prompt := st.chat_input("Ask a question about your PDF"):
-            response = qa_chain.invoke({"query": prompt})  # Updated to use .invoke()
-            response_str = response.get("result", "") if response else ""
-            record = {
-                "question": prompt,
-                "answer": response_str,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            st.session_state.history.append(record)
-
-            # Save to BigQuery
-            table_ref = f"{project_id}.{dataset_id}.{table_id}"
-            try:
-                bq_client.insert_rows_json(table_ref, [record])
-            except Exception as e:
-                st.error(f"Failed to insert record into BigQuery: {e}")
+# Replicate Credentials
+with st.sidebar:
+    st.title('Abhi Llama Chatbot')
+    # Use os.getenv to get the environment variable directly
+    replicate_api = os.getenv('REPLICATE_API_TOKEN')
+    if replicate_api:
+        st.success('API key already provided!', icon='✅')
     else:
-        st.error("Failed to extract text from PDF.")
+        # If the API token is not found in the environment, allow the user to input it
+        replicate_api = st.text_input('Enter Replicate API token:', type='password')
+        if not replicate_api:
+            st.warning('Please enter your credentials!', icon='⚠️')
+        else:
+            os.environ['REPLICATE_API_TOKEN'] = replicate_api  # Set the token as an environment variable for the current session
+            st.success('Proceed to entering your prompt message!', icon='👉')
+
+    # Refactored from https://github.com/a16z-infra/llama2-chatbot
+    st.subheader('Models and parameters')
+    selected_model = st.sidebar.selectbox('Choose a Llama2 model', ['Llama2-7B', 'Llama2-13B', 'Llama2-70B'], key='selected_model')
+    if selected_model == 'Llama2-7B':
+        llm = 'a16z-infra/llama7b-v2-chat:4f0a4744c7295c024a1de15e1a63c880d3da035fa1f49bfd344fe076074c8eea'
+    elif selected_model == 'Llama2-13B':
+        llm = 'a16z-infra/llama13b-v2-chat:df7690f1994d94e96ad9d568eac121aecf50684a0b0963b25a41cc40061269e5'
+    else:
+        llm = 'replicate/llama70b-v2-chat:e951f18578850b652510200860fc4ea62b3b16fac280f83ff32282f87bbd2e48'
+    
+    temperature = st.sidebar.slider('temperature', min_value=0.01, max_value=5.0, value=0.1, step=0.01)
+    st.markdown('**Temperature:** Controls the randomness or creativity of responses. Lower values make responses more deterministic, higher values increase diversity and unpredictability.')
+    
+    top_p = st.sidebar.slider('top_p', min_value=0.01, max_value=1.0, value=0.9, step=0.01)
+    st.markdown('**Top P (Nucleus Sampling):** Controls the diversity of text generation. Lower values result in more predictable text, higher values allow for more diverse responses.')
+    
+    max_length = st.sidebar.slider('max_length', min_value=64, max_value=4096, value=512, step=8)
+    st.markdown('**Max Length:** Sets the maximum length of the model\'s responses, controlling verbosity and detail in the conversation.')
+    
+    st.markdown('Created by Abhishek N. My Chatbot is still a baby, Go easy on her!')
+    
+os.environ['REPLICATE_API_TOKEN'] = replicate_api
+
+# Store LLM generated responses
+if "messages" not in st.session_state.keys():
+    st.session_state.messages = [{"role": "assistant", "content": "How may I assist you today?"}]
+
+# Display or clear chat messages
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.write(message["content"])
+
+def clear_chat_history():
+    st.session_state.messages = [{"role": "assistant", "content": "How may I assist you today?"}]
+st.sidebar.button('Clear Chat History', on_click=clear_chat_history)
+
+# Function for generating LLaMA2 response
+def generate_llama2_response(prompt_input):
+    string_dialogue = "You are a helpful assistant. You do not respond as 'User' or pretend to be 'User'. You only respond once as 'Assistant'."
+    for dict_message in st.session_state.messages:
+        if dict_message["role"] == "user":
+            string_dialogue += "User: " + dict_message["content"] + "\n\n"
+        else:
+            string_dialogue += "Assistant: " + dict_message["content"] + "\n\n"
+    output = replicate.run(llm, 
+                           input={"prompt": f"{string_dialogue} {prompt_input} Assistant: ",
+                                  "temperature":temperature, "top_p":top_p, "max_length":max_length, "repetition_penalty":1})
+    return output
+
+# User-provided prompt
+if prompt := st.chat_input(disabled=not replicate_api):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.write(prompt)
+
+# Generate a new response if last message is not from assistant
+if st.session_state.messages[-1]["role"] != "assistant":
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            response = generate_llama2_response(prompt)
+            placeholder = st.empty()
+            full_response = ''
+            for item in response:
+                full_response += item
+                placeholder.markdown(full_response)
+            placeholder.markdown(full_response)
+    message = {"role": "assistant", "content": full_response}
+    st.session_state.messages.append(message)
+
+
